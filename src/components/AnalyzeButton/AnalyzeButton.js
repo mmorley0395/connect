@@ -1,6 +1,6 @@
 import React, { useState, useContext } from "react";
 import { useDisclosure } from "@mantine/hooks";
-import { Tooltip, Modal, Progress, Button, Text } from "@mantine/core";
+import { Tooltip, Modal, Progress, Button, Text, Box } from "@mantine/core";
 import { useAuth0 } from "@auth0/auth0-react";
 import drawInstance from "../Map/MapboxDrawConfig";
 import makeAuthenticatedRequest from "../Authentication/Api";
@@ -47,6 +47,10 @@ function AnalyzeButton({ connectionType, onAnalyze, disabled }) {
     open();
   };
 
+  const handleCancel = () => {
+    setErrorModalOpened(false);
+  }
+
   const handleOverwrite = async () => {
     setProcessingModalOpened(true);
     if (drawInstance) {
@@ -71,7 +75,32 @@ function AnalyzeButton({ connectionType, onAnalyze, disabled }) {
     }
   };
 
-  const sendDataToServer = async (geoJsonData, overwrite = false) => {
+  const handleResubmit = async () => {
+    setProcessingModalOpened(true);
+    if (drawInstance) {
+      const allFeatures = drawInstance.getAll();
+      const featuresWithNames = allFeatures.features.map((feature, index) => {
+        const properties = feature.properties || {};
+        properties.name =
+          properties.name || (index === 0 ? project : `${project}${index + 1}`);
+        return { ...feature, properties };
+      });
+      setErrorModalOpened(false);
+
+      try {
+        await sendDataToServer(
+          { ...allFeatures, features: featuresWithNames },
+          false,
+          true
+        );
+        onAnalyze(project);
+      } catch (error) {
+        console.error("Failed to overwrite data:", error);
+      }
+    }
+  };
+
+  const sendDataToServer = async (geoJsonData, overwrite = false, resubmit = false) => {
     setIsLoading(true);
     const bodyData = {
       connection_type: connectionType,
@@ -79,7 +108,8 @@ function AnalyzeButton({ connectionType, onAnalyze, disabled }) {
       username: user.nickname,
     };
 
-    const queryString = overwrite ? "?overwrite=true" : "";
+    const queryString = overwrite ? "?overwrite=true" : resubmit ? "?resubmit=true" : "";
+
 
     try {
       const response = await makeAuthenticatedRequest(
@@ -118,7 +148,11 @@ function AnalyzeButton({ connectionType, onAnalyze, disabled }) {
       if (errorMessage.includes("Project name already used")) {
         setError("Project name already used.");
         setErrorModalOpened(true);
-      } else {
+      } else if(errorMessage.includes("Mileage of connected islands exceeds 300")) {
+        setError("")
+        setErrorModalOpened(true)
+      }
+      else {
         setError(errorMessage);
         setErrorModalOpened(true);
         setProcessingModalOpened(false);
@@ -208,12 +242,24 @@ function AnalyzeButton({ connectionType, onAnalyze, disabled }) {
   return (
     <>
       {/* Error Modal */}
-      <Modal opened={errorModalOpened} onClose={function() { setErrorModalOpened(false); }} title="Error">
+      <Modal opened={errorModalOpened} onClose={function() { setErrorModalOpened(false); }} title={error === "Mileage of connected islands exceeds 300" ? "Warning" : "Error"}>
         <Text>{error}</Text>
         {error === "Project name already used." && (
           <>
             <Button onClick={handleChooseDifferentName}>Choose Different Name</Button>
             <Button loading={isLoading} color="red" onClick={handleOverwrite}>Overwrite</Button>
+          </>
+        )}
+        {error === "Mileage of connected islands exceeds 300" && (
+          <>
+            <br/>
+            <Text>High mileage of connected islands currently causes excessively long processing times and failures. 
+              Consider setting up a smaller study segment or a study less dense location. There is ongoing work to remedy this issue.</Text>
+            <Box display='flex' gap='4px' marginTop='8px'>
+              <Button onClick={handleCancel}>Cancel</Button>
+              <Button loading={isLoading} color="orange" onClick={handleResubmit}>Re-submit</Button>
+            </Box>
+
           </>
         )}
       </Modal>
